@@ -46,3 +46,84 @@ public class CisamToHive {
         return line.split(",");
     }
 }
+
+
+
+import java.sql.*;
+import java.util.Iterator;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public class DynamicInsertWithOrgJson {
+    public static void main(String[] args) {
+        String jsonInput = """
+        {
+            "tablename": "item",
+            "items": [
+                { "itemId": 1, "product": "Pen", "quantity": 2 },
+                { "itemId": 2, "product": "Notebook", "quantity": 1 }
+            ]
+        }
+        """;
+
+        String dbUrl = "jdbc:oracle:thin:@localhost:1521:xe";
+        String user = "your_username";
+        String pass = "your_password";
+
+        try (Connection conn = DriverManager.getConnection(dbUrl, user, pass)) {
+            conn.setAutoCommit(false);
+
+            JSONObject root = new JSONObject(jsonInput);
+            String tableName = root.getString("tablename");
+            JSONArray items = root.getJSONArray("items");
+
+            if (items.isEmpty()) {
+                System.err.println("No items to insert.");
+                return;
+            }
+
+            // Use the first item to get column names
+            JSONObject firstItem = items.getJSONObject(0);
+            Iterator<String> keys = firstItem.keys();
+
+            StringBuilder columns = new StringBuilder();
+            StringBuilder placeholders = new StringBuilder();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                columns.append(key).append(",");
+                placeholders.append("?").append(",");
+            }
+
+            // Remove trailing commas
+            columns.setLength(columns.length() - 1);
+            placeholders.setLength(placeholders.length() - 1);
+
+            String insertSQL = "INSERT INTO " + tableName +
+                    " (" + columns + ") VALUES (" + placeholders + ")";
+            System.out.println("Generated SQL: " + insertSQL);
+
+            try (PreparedStatement stmt = conn.prepareStatement(insertSQL)) {
+                for (int i = 0; i < items.length(); i++) {
+                    JSONObject item = items.getJSONObject(i);
+                    int index = 1;
+                    for (String key : firstItem.keySet()) {
+                        Object value = item.opt(key);
+                        stmt.setObject(index++, value);
+                    }
+                    stmt.addBatch();
+                }
+
+                stmt.executeBatch();
+                conn.commit();
+                System.out.println("All items inserted into " + tableName + " in one commit.");
+            } catch (SQLException e) {
+                conn.rollback();
+                e.printStackTrace();
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
